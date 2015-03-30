@@ -636,6 +636,11 @@ void rtw_cfg80211_ibss_indicate_connect(_adapter *padapter)
 	struct wlan_network  *cur_network = &(pmlmepriv->cur_network);
 	struct wireless_dev *pwdev = padapter->rtw_wdev;
 	struct cfg80211_bss *bss = NULL;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0))
+	struct wiphy *wiphy = pwdev->wiphy;
+	int freq = (int)cur_network->network.Configuration.DSConfig;
+	struct ieee80211_channel *chan;
+#endif
 
 	DBG_871X(FUNC_ADPT_FMT"\n", FUNC_ADPT_ARG(padapter));
 	if (pwdev->iftype != NL80211_IFTYPE_ADHOC) 
@@ -687,7 +692,12 @@ void rtw_cfg80211_ibss_indicate_connect(_adapter *padapter)
 			DBG_871X_LEVEL(_drv_always_, FUNC_ADPT_FMT" BSS not found !!\n", FUNC_ADPT_ARG(padapter));
 	}
 	//notify cfg80211 that device joined an IBSS
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0))
+	chan = ieee80211_get_channel(wiphy, freq);
+	cfg80211_ibss_joined(padapter->pnetdev, cur_network->network.MacAddress, chan, GFP_ATOMIC);
+#else
 	cfg80211_ibss_joined(padapter->pnetdev, cur_network->network.MacAddress, GFP_ATOMIC);
+#endif
 }
 
 void rtw_cfg80211_indicate_connect(_adapter *padapter)
@@ -786,14 +796,14 @@ check_bss:
 	}
 	else
 	{
-		DBG_8192C("pwdev->sme_state(b)=%d\n", pwdev->sme_state);
+//		DBG_8192C("pwdev->sme_state(b)=%d\n", pwdev->sme_state);
 		cfg80211_connect_result(padapter->pnetdev, cur_network->network.MacAddress
 			, pmlmepriv->assoc_req+sizeof(struct rtw_ieee80211_hdr_3addr)+2
 			, pmlmepriv->assoc_req_len-sizeof(struct rtw_ieee80211_hdr_3addr)-2
 			, pmlmepriv->assoc_rsp+sizeof(struct rtw_ieee80211_hdr_3addr)+6
 			, pmlmepriv->assoc_rsp_len-sizeof(struct rtw_ieee80211_hdr_3addr)-6
 			, WLAN_STATUS_SUCCESS, GFP_ATOMIC);
-		DBG_8192C("pwdev->sme_state(a)=%d\n", pwdev->sme_state);
+//		DBG_8192C("pwdev->sme_state(a)=%d\n", pwdev->sme_state);
 	}
 }
 
@@ -832,17 +842,18 @@ void rtw_cfg80211_indicate_disconnect(_adapter *padapter)
 #endif //CONFIG_P2P
 
 	if (!padapter->mlmepriv.not_indic_disco) {
-		DBG_8192C("pwdev->sme_state(b)=%d\n", pwdev->sme_state);
-
+//		DBG_8192C("pwdev->sme_state(b)=%d\n", pwdev->sme_state);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,11,0)
 		if(pwdev->sme_state==CFG80211_SME_CONNECTING)
-			cfg80211_connect_result(padapter->pnetdev, NULL, NULL, 0, NULL, 0, 
+			cfg80211_connect_result(padapter->pnetdev, NULL, NULL, 0, NULL, 0,
 				WLAN_STATUS_UNSPECIFIED_FAILURE, GFP_ATOMIC/*GFP_KERNEL*/);
 		else if(pwdev->sme_state==CFG80211_SME_CONNECTED)
 			cfg80211_disconnected(padapter->pnetdev, 0, NULL, 0, GFP_ATOMIC);
-		//else
-			//DBG_8192C("pwdev->sme_state=%d\n", pwdev->sme_state);
+#else
+		cfg80211_disconnected(padapter->pnetdev, 0, NULL, 0, GFP_ATOMIC);
+#endif
 
-		DBG_8192C("pwdev->sme_state(a)=%d\n", pwdev->sme_state);
+//		DBG_8192C("pwdev->sme_state(a)=%d\n", pwdev->sme_state);
 	}
 }
  	
@@ -1654,7 +1665,7 @@ static int cfg80211_rtw_set_default_key(struct wiphy *wiphy,
 
 static int cfg80211_rtw_get_station(struct wiphy *wiphy,
 				    struct net_device *ndev,
-				    u8 *mac, struct station_info *sinfo)
+				    const u8 *mac, struct station_info *sinfo)
 {
 	int ret = 0;
 	_adapter *padapter = (_adapter *)rtw_netdev_priv(ndev);
@@ -3042,7 +3053,7 @@ static int cfg80211_rtw_connect(struct wiphy *wiphy, struct net_device *ndev,
 
 	DBG_8192C("%s, ie_len=%zu\n", __func__, sme->ie_len);
 			
-	ret = rtw_cfg80211_set_wpa_ie(padapter, sme->ie, sme->ie_len);
+	ret = rtw_cfg80211_set_wpa_ie(padapter, (u8 *)sme->ie, sme->ie_len);
 	if (ret < 0)
 		goto exit;
 
@@ -3138,7 +3149,7 @@ static int cfg80211_rtw_connect(struct wiphy *wiphy, struct net_device *ndev,
 
 	//rtw_set_802_11_encryption_mode(padapter, padapter->securitypriv.ndisencryptstatus);
 
-	if (rtw_set_802_11_connect(padapter, sme->bssid, &ndis_ssid) == _FALSE) {
+	if (rtw_set_802_11_connect(padapter, (u8 *)sme->bssid, &ndis_ssid) == _FALSE) {
 		ret = -1;
 		goto exit;
 	}
@@ -4021,7 +4032,7 @@ static int cfg80211_rtw_start_ap(struct wiphy *wiphy, struct net_device *ndev,
 		WLAN_BSSID_EX *pbss_network_ext = &adapter->mlmeextpriv.mlmext_info.network;
 
 		if(0)
-		DBG_871X(FUNC_ADPT_FMT" ssid:(%s,%d), from ie:(%s,%d)\n", FUNC_ADPT_ARG(adapter),
+		DBG_871X(FUNC_ADPT_FMT" ssid:(%s,%zu), from ie:(%s,%d)\n", FUNC_ADPT_ARG(adapter),
 			settings->ssid, settings->ssid_len,
 			pbss_network->Ssid.Ssid, pbss_network->Ssid.SsidLength);
 
@@ -4061,7 +4072,7 @@ static int cfg80211_rtw_stop_ap(struct wiphy *wiphy, struct net_device *ndev)
 #endif //(LINUX_VERSION_CODE < KERNEL_VERSION(3,4,0))
 
 static int	cfg80211_rtw_add_station(struct wiphy *wiphy, struct net_device *ndev,
-			       u8 *mac, struct station_parameters *params)
+			       const u8 *mac, struct station_parameters *params)
 {
 	DBG_871X(FUNC_NDEV_FMT"\n", FUNC_NDEV_ARG(ndev));
 	
@@ -4069,7 +4080,7 @@ static int	cfg80211_rtw_add_station(struct wiphy *wiphy, struct net_device *ndev
 }
 
 static int	cfg80211_rtw_del_station(struct wiphy *wiphy, struct net_device *ndev,
-			       u8 *mac)
+			       const u8 *mac)
 {
 	int ret=0;	
 	_irqL irqL;
@@ -4160,7 +4171,7 @@ static int	cfg80211_rtw_del_station(struct wiphy *wiphy, struct net_device *ndev
 }
 
 static int	cfg80211_rtw_change_station(struct wiphy *wiphy, struct net_device *ndev,
-				  u8 *mac, struct station_parameters *params)
+				  const u8 *mac, struct station_parameters *params)
 {
 	DBG_871X(FUNC_NDEV_FMT"\n", FUNC_NDEV_ARG(ndev));
 	
@@ -5889,7 +5900,11 @@ static void rtw_cfg80211_preinit_wiphy(_adapter *padapter, struct wiphy *wiphy)
 #endif
 
 #if defined(CONFIG_PM) && (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0))
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,11,0))
 	wiphy->wowlan = wowlan_stub;
+#else
+	wiphy->wowlan = &wowlan_stub;
+#endif
 #endif
 
 #if defined(CONFIG_TDLS) && (LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0))
